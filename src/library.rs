@@ -1,4 +1,5 @@
-use std::{ffi::OsString, fs, io, path::PathBuf};
+use crate::io_fs_errors::{expect_dir, expected_data_in_collections, osstring_conversion_error};
+use std::{fs, io, path::PathBuf};
 use uuid::Uuid;
 
 const COLLECTION_FILENAME: &str = "COLLECTION";
@@ -11,6 +12,33 @@ pub struct Entry {
     pub authors: Vec<String>,
     pub year: u16,
     pub category: String,
+}
+
+impl Entry {
+    pub fn parse(category: &str, data: &str) -> Option<Self> {
+        let mut parts = data.split(";;");
+        let filename = parts.next()?.into();
+        let year = match parts.next()?.parse::<u16>() {
+            Ok(y) => Some(y),
+            Err(_) => None,
+        }?;
+
+        let authors = parts
+            .next()?
+            .split(",")
+            .map(|author| author.trim().into())
+            .collect();
+
+        let name = parts.next()?.into();
+
+        Some(Self {
+            filename,
+            name,
+            authors,
+            year,
+            category: category.into(),
+        })
+    }
 }
 
 pub struct Library {
@@ -85,11 +113,9 @@ impl Library {
                 continue;
             }
 
-            Self::expect_dir(&entry)?;
+            expect_dir(&entry)?;
 
-            let category = name_os
-                .into_string()
-                .map_err(Self::osstring_conversion_error)?;
+            let category = name_os.into_string().map_err(osstring_conversion_error)?;
 
             self.fetch_category(category, entry)?;
         }
@@ -105,64 +131,14 @@ impl Library {
                 continue;
             }; // deleted or missing line. it's ok
 
-            let entry = match Self::parse_entry(&category, book) {
+            let entry = match Entry::parse(&category, book) {
                 Some(e) => e,
-                None => return Err(Self::expect_data_in_collections()),
+                None => return Err(expected_data_in_collections()),
             };
 
             self.push(entry);
         }
 
         Ok(())
-    }
-
-    fn parse_entry(category: &str, data: &str) -> Option<Entry> {
-        let mut parts = data.split(";;");
-        let filename = parts.next()?.into();
-        let year = match parts.next()?.parse::<u16>() {
-            Ok(y) => Some(y),
-            Err(_) => None,
-        }?;
-
-        let authors = parts
-            .next()?
-            .split(",")
-            .map(|author| author.trim().into())
-            .collect();
-
-        let name = parts.next()?.into();
-
-        Some(Entry {
-            filename,
-            name,
-            authors,
-            year,
-            category: category.into(),
-        })
-    }
-
-    fn expect_dir(dir_entry: &fs::DirEntry) -> io::Result<()> {
-        if dir_entry.file_type()?.is_dir() {
-            return Ok(());
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::NotADirectory,
-            "Expected category directory, found file",
-        ))
-    }
-
-    fn expect_data_in_collections() -> io::Error {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid collection file. Please delete it and re-load all books again.",
-        )
-    }
-
-    fn osstring_conversion_error(_: OsString) -> io::Error {
-        io::Error::new(
-            io::ErrorKind::InvalidFilename,
-            "Failed to convert file name to String",
-        )
     }
 }
